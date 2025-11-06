@@ -1,0 +1,5 @@
+*.Rproj
+*.Rproj.user/
+.Rhistory
+insurance_v.csv
+*.pdf

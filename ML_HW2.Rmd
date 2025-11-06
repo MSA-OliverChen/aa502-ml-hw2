@@ -1,0 +1,73 @@
+---
+title: "Machine Learning HW2"
+author: "Fall HW Team 6"
+date: "2025-11-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Prompt
+
+* For this phase use only the insurance_t data set.
+* Previous analysis has identified potential predictor variables related to the purchase of the insurance product so no initial variable selection before model building is necessary.
+* The data has missing values that need to be imputed.
+  * Typically, the Bank has used median and mode imputation for continuous and categorical variables but are open to other techniques if they are justified in the report.
+* The Bank is interested in the value of random forest models.
+  * Build a random forest model.
+    * (HINT: You CANNOT just copy and paste the code from class. In class we built a model to predict a continuous variable. Make sure your target variable is a factor for the random forest.)
+  * Tune the model parameters and recommend a final random forest model.
+    * You are welcome to consider variable selection as well for building your final model. Describe your process for arriving at your final model.
+  * Report the variable importance for each of the variables in the model.
+    * Pick one metric to rank things by – no need to report multiple metrics for each variable.
+  * Report the area under the ROC curve as well as a plot of the ROC curve.
+    * (HINT: Use the same approaches you used back in the logistic regression class.)
+* The Bank is also interested in the value of an XGBoost model.
+  * Build an XGBoost model.
+    * (HINT: You CANNOT just copy and paste the code from class. In class we built a model to predict a continuous variable. You will need to look up the documentation for the ‘objective = "binary:logistic" ‘ option.)
+    * Use the area under the ROC curve (AUC) as your evaluation metric instead of the default in XGBoost.
+  * Tune the model parameters and recommend a final XGBoost model.
+    * You are welcome to consider variable selection as well for building your final model. Describe your process for arriving at your final model.
+  * Report the variable importance for each of the variables in the model.
+  * Report the area under the ROC curve as well as a plot of the ROC curve.
+    * (HINT: Use the same approaches you used back in the logistic regression class.)
+    
+# Setup
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(xgboost)
+library(Ckmeans.1d.dp)
+library(pdp)
+```
+
+## Data
+
+```{r}
+ins_t_raw = readr::read_csv('insurance_t.csv')
+
+ins_t = data.frame(ins_t_raw)
+categoricals = c('DDA', 'DIRDEP', 'NSF', 'TELLER', 'SAV',
+                 'ATM', 'CD', 'IRA', 'INV', 'MM', 'CC',
+                 'SDB', 'INAREA', 'INS', 'BRANCH')
+
+ins_t = ins_t %>%
+  mutate(across(categoricals,
+                as.factor))
+         
+ins_t
+```
+
+# Analysis
+
+## Random Forest
+
+## XGBoost
