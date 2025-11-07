@@ -47,13 +47,18 @@ library(randomForest)
 library(xgboost)
 library(Ckmeans.1d.dp)
 library(pdp)
+library(DescTools)
 ```
 
 ## Data
 
 ```{r}
 ins_t_raw = readr::read_csv('insurance_t.csv')
+```
 
+Imputation.
+
+```{r}
 ins_t = data.frame(ins_t_raw)
 categoricals = c('DDA', 'DIRDEP', 'NSF', 'TELLER', 'SAV',
                  'ATM', 'CD', 'IRA', 'INV', 'MM', 'CC',
@@ -62,9 +67,36 @@ categoricals = c('DDA', 'DIRDEP', 'NSF', 'TELLER', 'SAV',
 ins_t = ins_t %>%
   mutate(across(categoricals,
                 as.factor))
-         
-ins_t
+
+missing = ins_t %>%
+  summarize(across(everything(), 
+                   ~sum(is.na(.)))) %>%
+  t() %>% 
+  as.data.frame() %>%
+  mutate(n_missing = V1) %>%
+  dplyr::select(!V1) %>%
+  filter(n_missing > 0)
+
+missing_cols = missing %>% rownames()
+# missing columns subsets for numeric and categorical data, respectively
+missing_num = setdiff(missing_cols, categoricals)
+missing_fctr = intersect(missing_cols, categoricals)
+
+ins_t = ins_t %>%
+  # Continuous variables: median imputation
+  mutate(
+    across(all_of(missing_num),
+           ~ replace_na(.x, median(.x, na.rm = T))
+    )
+  ) %>%
+  # Categorical variables: mode imputation
+  mutate(
+    across(all_of(missing_fctr),
+           ~ replace_na(.x, Mode(.x, na.rm = T))
+    )
+  )
 ```
+
 
 # Analysis
 
