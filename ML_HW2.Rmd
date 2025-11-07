@@ -48,6 +48,7 @@ library(xgboost)
 library(Ckmeans.1d.dp)
 library(pdp)
 library(DescTools)
+library(progress)
 ```
 
 ## Data
@@ -62,7 +63,7 @@ Imputation.
 ins_t = data.frame(ins_t_raw)
 categoricals = c('DDA', 'DIRDEP', 'NSF', 'TELLER', 'SAV',
                  'ATM', 'CD', 'IRA', 'INV', 'MM', 'CC',
-                 'SDB', 'INAREA', 'INS', 'BRANCH')
+                 'SDB', 'INAREA', 'BRANCH')
 
 ins_t = ins_t %>%
   mutate(across(categoricals,
@@ -103,3 +104,115 @@ ins_t = ins_t %>%
 ## Random Forest
 
 ## XGBoost
+
+> Build an XGBoost model. (HINT: You CANNOT just copy and paste the code from class. In class we built a model to predict a continuous variable. You will need to look up the documentation for the ‘objective = "binary:logistic" ‘ option.)
+> Use the area under the ROC curve (AUC) as your evaluation metric instead of the default in XGBoost.
+
+```{r}
+ins_t_x = model.matrix(INS ~ ., data = ins_t)[, -1]
+ins_t_y = ins_t$INS %>% as.numeric()
+
+set.seed(123)
+xgb_ins_1 = xgboost(
+  data = ins_t_x,
+  label = ins_t_y,
+  subsample = 0.5, 
+  nrounds = 100,
+  # nfold = 5,
+  objective = 'binary:logistic', 
+  eval_metric = 'auc',
+  maximize = T,
+  verbose = 0
+)
+# I think these settings are overfitting
+```
+
+These default settings seem to be overfitting. Let's use cross-validation and tweak the hyperparameters (trying a few different values). 
+
+```{r}
+xgb_options = function(x, y, eta, max_depth, subsample, 
+                       verbose = 1, seed = 123) {
+  # print(paste(paste('eta=', eta, sep=''),
+  #                   paste('max_depth=', max_depth, sep=''),
+  #                   paste('subsample=', subsample, sep=''),
+  #                   sep = ', '))
+  set.seed(seed)
+  xgb = xgb.cv(
+    # settings
+    data = x,
+    label = y,
+    objective = 'binary:logistic', 
+    eval_metric = 'auc',
+    maximize = T,
+    verbose = verbose,
+    early_stopping_rounds = 10,
+    
+    # hyperparameters
+    nfold = 5,
+    eta = eta,
+    subsample = subsample, 
+    max_depth = max_depth,
+    nrounds = 100,
+    min_child_weight = 4
+  )
+  
+  # TODO: return the whole model
+  return(
+    xgb$evaluation_log[xgb$best_iteration] %>% 
+      pull(test_auc_mean)
+  )
+}
+
+xgb_grid = function(x, y, etas, max_depths, subsamples) {
+  res = tibble(
+    eta = numeric(),
+    max_depth = numeric(),
+    subsample = numeric(),
+    test_auc = numeric()
+  )
+  total_iterations = length(etas) * length(max_depths) * length(subsamples)
+  pb = progress_bar$new(total = total_iterations,
+                         format = "[:bar] :percent ETA: :eta")
+  
+  for (eta in etas) {
+    for (max_depth in max_depths) {
+      for (subsample in subsamples) {
+        test_auc = xgb_options(x, y, eta, max_depth, subsample, verbose = 0)
+        res = res %>%
+          add_row(eta = eta, 
+                  max_depth = max_depth, 
+                  subsample = subsample, 
+                  test_auc = test_auc)
+        pb$tick()
+      }
+    }
+  }
+  res = res %>%
+    tibble::rowid_to_column('id')
+  
+  return(res)
+}
+
+# WARNING: this takes a while. A progress bar will show in your console.
+xgb_grid_ins = xgb_grid(
+  ins_t_x, 
+  ins_t_y, 
+  c(0.1, 0.15, 0.2, 0.25, 0.3),
+  c(1:10),
+  c(0.25, 0.5, 0.75, 1)
+)
+xgb_grid_ins
+```
+
+> Tune the model parameters and recommend a final XGBoost model. 
+
+```{r}
+# TODO: understand how to get the final model as a list of parameters
+```
+
+
+> You are welcome to consider variable selection as well for building your final model. Describe your process for arriving at your final model.
+
+> Report the variable importance for each of the variables in the model.
+
+> Report the area under the ROC curve as well as a plot of the ROC curve. (HINT: Use the same approaches you used back in the logistic regression class.)
