@@ -49,6 +49,7 @@ library(Ckmeans.1d.dp)
 library(pdp)
 library(DescTools)
 library(progress)
+library(ROCit)
 ```
 
 ## Data
@@ -66,7 +67,7 @@ categoricals = c('DDA', 'DIRDEP', 'NSF', 'TELLER', 'SAV',
                  'SDB', 'INAREA', 'BRANCH')
 
 ins_t = ins_t %>%
-  mutate(across(categoricals,
+  mutate(across(all_of(categoricals),
                 as.factor))
 
 missing = ins_t %>%
@@ -104,6 +105,12 @@ ins_t = ins_t %>%
 ## Random Forest
 
 ## XGBoost
+
+<!-- 
+Resources: 
+* https://dhale-2025.github.io/MLBook/Tree_Based_R.html
+* https://dhale-2025.github.io/MLBook/rf-xgb-params.html 
+-->
 
 > Build an XGBoost model. (HINT: You CANNOT just copy and paste the code from class. In class we built a model to predict a continuous variable. You will need to look up the documentation for the ‘objective = "binary:logistic" ‘ option.)
 > Use the area under the ROC curve (AUC) as your evaluation metric instead of the default in XGBoost.
@@ -238,20 +245,27 @@ It appears that the best model chosen using cross-validation and without variabl
 
 ```{r}
 # training the model using the cv hyperparameters
-xgb_final_ins_params = list(
+# xgb_ins_final_params = list(
+#   objective = 'binary:logistic',
+#   eval_metric = 'auc',
+#   eta = xgb_final_ins_cv$eta,
+#   max_depth = xgb_final_ins_cv$max_depth,
+#   subsample = xgb_final_ins_cv$subsample
+# )
+xgb_ins_final_params = list(
   objective = 'binary:logistic',
   eval_metric = 'auc',
-  eta = xgb_final_ins_cv$eta,
-  max_depth = xgb_final_ins_cv$max_depth,
-  subsample = xgb_final_ins_cv$subsample
+  eta = 0.10,
+  max_depth = 4,
+  subsample = 0.75
 )
 
 xgb_ins_dtrain = xgb.DMatrix(
   data = ins_t_x,
   label = ins_t_y
 )
-xgb_final_ins = xgb.train(
-  params = xgb_final_ins_params,
+xgb_ins_final_model = xgb.train(
+  params = xgb_ins_final_params,
   data = xgb_ins_dtrain,
   nrounds = 100,
   verbose = 1
@@ -259,7 +273,7 @@ xgb_final_ins = xgb.train(
 
 xgb.ggplot.importance(
   xgb.importance(feature_names = colnames(ins_t_x), 
-                 model = xgb_final_ins)
+                 model = xgb_ins_final_model)
 )
 ```
 
@@ -267,6 +281,23 @@ xgb.ggplot.importance(
 > Report the area under the ROC curve as well as a plot of the ROC curve. (HINT: Use the same approaches you used back in the logistic regression class.)
 
 ```{r}
+xgb_ins_phat = predict(xgb_ins_final_model, xgb_ins_dtrain)
+xgb_ins_roc = rocit(xgb_ins_phat, ins_t_y)
 
+# AUC
+paste('AUC: ', xgb_ins_roc$AUC, sep = '') %>%
+  print()
+
+# lift table
+xgb_ins_roc %>% gainstable()
+
+cutoff = plot(xgb_ins_roc, YIndex = TRUE, values = TRUE)$optimal[['value']]
+title('ROC Curve')
+xgb_ins_preds = if_else(xgb_ins_phat >= cutoff, "pred_1", "pred_0")
+confusion = table(ins_t$INS, xgb_ins_preds)
+
+accuracy = (confusion[[1, 1]] + confusion[[2, 2]]) / sum(confusion)
+paste('Accuracy: ', accuracy, sep = '') %>%
+  print()
 ```
 
