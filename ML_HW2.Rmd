@@ -129,13 +129,22 @@ xgb_ins_1 = xgboost(
 
 These default settings seem to be overfitting. Let's use cross-validation and tweak the hyperparameters (trying a few different values). 
 
+> Tune the model parameters and recommend a final XGBoost model. 
+
 ```{r}
-xgb_options = function(x, y, eta, max_depth, subsample, 
-                       verbose = 1, seed = 123) {
-  # print(paste(paste('eta=', eta, sep=''),
-  #                   paste('max_depth=', max_depth, sep=''),
-  #                   paste('subsample=', subsample, sep=''),
-  #                   sep = ', '))
+# Wrapper function to easily run cross validated
+# binary classification XGBoost with AUC as the 
+# objective function.
+xgb_options = function(x, y, 
+                       eta, 
+                       max_depth, 
+                       subsample, 
+                       verbose = 1, 
+                       seed = 123,
+                       early_stopping_rounds = 10,
+                       nfold = 5,
+                       nrounds = 100,
+                       min_child_weight = 1) {
   set.seed(seed)
   xgb = xgb.cv(
     # settings
@@ -145,30 +154,29 @@ xgb_options = function(x, y, eta, max_depth, subsample,
     eval_metric = 'auc',
     maximize = T,
     verbose = verbose,
-    early_stopping_rounds = 10,
+    early_stopping_rounds = early_stopping_rounds,
     
     # hyperparameters
-    nfold = 5,
+    nfold = nfold,
     eta = eta,
     subsample = subsample, 
     max_depth = max_depth,
-    nrounds = 100,
-    min_child_weight = 4
+    nrounds = nrounds,
+    min_child_weight = min_child_weight
   )
   
-  # TODO: return the whole model
-  return(
-    xgb$evaluation_log[xgb$best_iteration] %>% 
-      pull(test_auc_mean)
-  )
+  return(xgb)
 }
 
+# Function to do a grid search using a variety of hyperparameters
 xgb_grid = function(x, y, etas, max_depths, subsamples) {
   res = tibble(
     eta = numeric(),
     max_depth = numeric(),
     subsample = numeric(),
-    test_auc = numeric()
+    test_auc = numeric(),
+    model = list(),
+    call = list()
   )
   total_iterations = length(etas) * length(max_depths) * length(subsamples)
   pb = progress_bar$new(total = total_iterations,
@@ -177,12 +185,17 @@ xgb_grid = function(x, y, etas, max_depths, subsamples) {
   for (eta in etas) {
     for (max_depth in max_depths) {
       for (subsample in subsamples) {
-        test_auc = xgb_options(x, y, eta, max_depth, subsample, verbose = 0)
+        xgb = xgb_options(x, y, eta, max_depth, subsample, verbose = 0)
+        test_auc = xgb$evaluation_log[xgb$best_iteration] %>% 
+          pull(test_auc_mean)
         res = res %>%
           add_row(eta = eta, 
                   max_depth = max_depth, 
                   subsample = subsample, 
-                  test_auc = test_auc)
+                  test_auc = test_auc,
+                  model = list(xgb),
+                  call = list(xgb$call)
+                  )
         pb$tick()
       }
     }
@@ -194,25 +207,66 @@ xgb_grid = function(x, y, etas, max_depths, subsamples) {
 }
 
 # WARNING: this takes a while. A progress bar will show in your console.
+seed = 123
 xgb_grid_ins = xgb_grid(
-  ins_t_x, 
-  ins_t_y, 
-  c(0.1, 0.15, 0.2, 0.25, 0.3),
-  c(1:10),
-  c(0.25, 0.5, 0.75, 1)
+  x = ins_t_x, 
+  y = ins_t_y, 
+  etas = c(0.1, 0.15, 0.2, 0.25, 0.3),
+  max_depths = c(1:10),
+  subsamples = c(0.25, 0.5, 0.75, 1),
+  seed = seed
 )
 xgb_grid_ins
 ```
 
-> Tune the model parameters and recommend a final XGBoost model. 
-
 ```{r}
-# TODO: understand how to get the final model as a list of parameters
+xgb_final_ins_cv = xgb_grid_ins %>%
+  arrange(desc(test_auc)) %>%
+  head(1)
+xgb_final_ins_cv
 ```
 
+It appears that the best model chosen using cross-validation and without variable selection has the following parameters:
+* Learning rate (`eta`): 0.10
+* Tree depth (`max_depth`): 4
+* Training data fraction (`subsample`): 0.75
+* Minimum child weight (`min_child_weight`): 1
 
 > You are welcome to consider variable selection as well for building your final model. Describe your process for arriving at your final model.
 
 > Report the variable importance for each of the variables in the model.
 
+```{r}
+# training the model using the cv hyperparameters
+xgb_final_ins_params = list(
+  objective = 'binary:logistic',
+  eval_metric = 'auc',
+  eta = xgb_final_ins_cv$eta,
+  max_depth = xgb_final_ins_cv$max_depth,
+  subsample = xgb_final_ins_cv$subsample
+)
+
+xgb_ins_dtrain = xgb.DMatrix(
+  data = ins_t_x,
+  label = ins_t_y
+)
+xgb_final_ins = xgb.train(
+  params = xgb_final_ins_params,
+  data = xgb_ins_dtrain,
+  nrounds = 100,
+  verbose = 1
+)
+
+xgb.ggplot.importance(
+  xgb.importance(feature_names = colnames(ins_t_x), 
+                 model = xgb_final_ins)
+)
+```
+
+
 > Report the area under the ROC curve as well as a plot of the ROC curve. (HINT: Use the same approaches you used back in the logistic regression class.)
+
+```{r}
+
+```
+
