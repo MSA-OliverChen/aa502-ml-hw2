@@ -102,4 +102,41 @@ ins_t = ins_t %>%
 
 ## Random Forest
 
+
+```{r}
+#Creating Random Forest Model
+rfmodel <-randomForest(INS ~ ., data = ins_t)
+#Confirming classification
+rfmodel$type
+
+rfmodel
+```
+```{r}
+#Tuning model 
+#Creating Random Forest Model
+rfmodel <-randomForest(INS ~ ., data = ins_t)
+#Confirming classification
+rfmodel$type
+
+rfmodel
+```
+
+```{r}
+#Using automated search algorithm for optimizing number of variables tried at each split
+rf_tuned <- tuneRF(x = ins_t[, -which(names(ins_t) == "INS")], y = ins_t$INS)
+
+rf_tuned
+```
+```{r}
+rf_more <- randomForest(INS ~ ., data = ins_t, mtry = 6, ntree = 1000)
+rf_more
+```
+```{r}
+var_imp <- varImpPlot(rfmodel)
+var_imp
+
+```
+
+
+
 ## XGBoost
