@@ -48,6 +48,8 @@ library(xgboost)
 library(Ckmeans.1d.dp)
 library(pdp)
 library(DescTools)
+library(progress)
+library(ROCit)
 ```
 
 ## Data
@@ -62,10 +64,10 @@ Imputation.
 ins_t = data.frame(ins_t_raw)
 categoricals = c('DDA', 'DIRDEP', 'NSF', 'TELLER', 'SAV',
                  'ATM', 'CD', 'IRA', 'INV', 'MM', 'CC',
-                 'SDB', 'INAREA', 'INS', 'BRANCH')
+                 'SDB', 'INAREA', 'BRANCH')
 
 ins_t = ins_t %>%
-  mutate(across(categoricals,
+  mutate(across(all_of(categoricals),
                 as.factor))
 
 missing = ins_t %>%
@@ -103,3 +105,199 @@ ins_t = ins_t %>%
 ## Random Forest
 
 ## XGBoost
+
+<!-- 
+Resources: 
+* https://dhale-2025.github.io/MLBook/Tree_Based_R.html
+* https://dhale-2025.github.io/MLBook/rf-xgb-params.html 
+-->
+
+> Build an XGBoost model. (HINT: You CANNOT just copy and paste the code from class. In class we built a model to predict a continuous variable. You will need to look up the documentation for the ‘objective = "binary:logistic" ‘ option.)
+> Use the area under the ROC curve (AUC) as your evaluation metric instead of the default in XGBoost.
+
+```{r}
+ins_t_x = model.matrix(INS ~ ., data = ins_t)[, -1]
+ins_t_y = ins_t$INS %>% as.numeric()
+
+set.seed(123)
+xgb_ins_1 = xgboost(
+  data = ins_t_x,
+  label = ins_t_y,
+  subsample = 0.5, 
+  nrounds = 100,
+  # nfold = 5,
+  objective = 'binary:logistic', 
+  eval_metric = 'auc',
+  maximize = T,
+  verbose = 0
+)
+# I think these settings are overfitting
+```
+
+These default settings seem to be overfitting. Let's use cross-validation and tweak the hyperparameters (trying a few different values). 
+
+> Tune the model parameters and recommend a final XGBoost model. 
+
+```{r}
+# Wrapper function to easily run cross validated
+# binary classification XGBoost with AUC as the 
+# objective function.
+xgb_options = function(x, y, 
+                       eta, 
+                       max_depth, 
+                       subsample, 
+                       verbose = 1, 
+                       seed = 123,
+                       early_stopping_rounds = 10,
+                       nfold = 5,
+                       nrounds = 100,
+                       min_child_weight = 1) {
+  set.seed(seed)
+  xgb = xgb.cv(
+    # settings
+    data = x,
+    label = y,
+    objective = 'binary:logistic', 
+    eval_metric = 'auc',
+    maximize = T,
+    verbose = verbose,
+    early_stopping_rounds = early_stopping_rounds,
+    
+    # hyperparameters
+    nfold = nfold,
+    eta = eta,
+    subsample = subsample, 
+    max_depth = max_depth,
+    nrounds = nrounds,
+    min_child_weight = min_child_weight
+  )
+  
+  return(xgb)
+}
+
+# Function to do a grid search using a variety of hyperparameters
+xgb_grid = function(x, y, etas, max_depths, subsamples) {
+  res = tibble(
+    eta = numeric(),
+    max_depth = numeric(),
+    subsample = numeric(),
+    test_auc = numeric(),
+    model = list(),
+    call = list()
+  )
+  total_iterations = length(etas) * length(max_depths) * length(subsamples)
+  pb = progress_bar$new(total = total_iterations,
+                         format = "[:bar] :percent ETA: :eta")
+  
+  for (eta in etas) {
+    for (max_depth in max_depths) {
+      for (subsample in subsamples) {
+        xgb = xgb_options(x, y, eta, max_depth, subsample, verbose = 0)
+        test_auc = xgb$evaluation_log[xgb$best_iteration] %>% 
+          pull(test_auc_mean)
+        res = res %>%
+          add_row(eta = eta, 
+                  max_depth = max_depth, 
+                  subsample = subsample, 
+                  test_auc = test_auc,
+                  model = list(xgb),
+                  call = list(xgb$call)
+                  )
+        pb$tick()
+      }
+    }
+  }
+  res = res %>%
+    tibble::rowid_to_column('id')
+  
+  return(res)
+}
+
+# WARNING: this takes a while. A progress bar will show in your console.
+seed = 123
+xgb_grid_ins = xgb_grid(
+  x = ins_t_x, 
+  y = ins_t_y, 
+  etas = c(0.1, 0.15, 0.2, 0.25, 0.3),
+  max_depths = c(1:10),
+  subsamples = c(0.25, 0.5, 0.75, 1),
+  seed = seed
+)
+xgb_grid_ins
+```
+
+```{r}
+xgb_final_ins_cv = xgb_grid_ins %>%
+  arrange(desc(test_auc)) %>%
+  head(1)
+xgb_final_ins_cv
+```
+
+It appears that the best model chosen using cross-validation and without variable selection has the following parameters:
+* Learning rate (`eta`): 0.10
+* Tree depth (`max_depth`): 4
+* Training data fraction (`subsample`): 0.75
+* Minimum child weight (`min_child_weight`): 1
+
+> You are welcome to consider variable selection as well for building your final model. Describe your process for arriving at your final model.
+
+> Report the variable importance for each of the variables in the model.
+
+```{r}
+# training the model using the cv hyperparameters
+# xgb_ins_final_params = list(
+#   objective = 'binary:logistic',
+#   eval_metric = 'auc',
+#   eta = xgb_final_ins_cv$eta,
+#   max_depth = xgb_final_ins_cv$max_depth,
+#   subsample = xgb_final_ins_cv$subsample
+# )
+xgb_ins_final_params = list(
+  objective = 'binary:logistic',
+  eval_metric = 'auc',
+  eta = 0.10,
+  max_depth = 4,
+  subsample = 0.75
+)
+
+xgb_ins_dtrain = xgb.DMatrix(
+  data = ins_t_x,
+  label = ins_t_y
+)
+xgb_ins_final_model = xgb.train(
+  params = xgb_ins_final_params,
+  data = xgb_ins_dtrain,
+  nrounds = 100,
+  verbose = 1
+)
+
+xgb.ggplot.importance(
+  xgb.importance(feature_names = colnames(ins_t_x), 
+                 model = xgb_ins_final_model)
+)
+```
+
+
+> Report the area under the ROC curve as well as a plot of the ROC curve. (HINT: Use the same approaches you used back in the logistic regression class.)
+
+```{r}
+xgb_ins_phat = predict(xgb_ins_final_model, xgb_ins_dtrain)
+xgb_ins_roc = rocit(xgb_ins_phat, ins_t_y)
+
+# AUC
+paste('AUC: ', xgb_ins_roc$AUC, sep = '') %>%
+  print()
+
+# lift table
+xgb_ins_roc %>% gainstable()
+
+cutoff = plot(xgb_ins_roc, YIndex = TRUE, values = TRUE)$optimal[['value']]
+title('ROC Curve')
+xgb_ins_preds = if_else(xgb_ins_phat >= cutoff, "pred_1", "pred_0")
+confusion = table(ins_t$INS, xgb_ins_preds)
+
+accuracy = (confusion[[1, 1]] + confusion[[2, 2]]) / sum(confusion)
+paste('Accuracy: ', accuracy, sep = '') %>%
+  print()
+```
+
