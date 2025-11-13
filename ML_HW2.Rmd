@@ -96,46 +96,140 @@ ins_t = ins_t %>%
     )
   )
 ```
-
+j
 
 # Analysis
 
 ## Random Forest
-
-
 ```{r}
+#Add random variable for feature selection sanity check
+ins_t$random <- rnorm(nrow(ins_t))
+
 #Creating Random Forest Model
-rfmodel <-randomForest(INS ~ ., data = ins_t)
-#Confirming classification
-rfmodel$type
-
+rfmodel<-randomForest(INS ~ ., data = ins_t)
 rfmodel
-```
-```{r}
-#Tuning model 
-#Creating Random Forest Model
-rfmodel <-randomForest(INS ~ ., data = ins_t)
-#Confirming classification
-rfmodel$type
-
-rfmodel
+plot(rfmodel, main = "Random Forest: Error vs Trees")
 ```
 
-```{r}
-#Using automated search algorithm for optimizing number of variables tried at each split
-rf_tuned <- tuneRF(x = ins_t[, -which(names(ins_t) == "INS")], y = ins_t$INS)
 
-rf_tuned
-```
-```{r}
-rf_more <- randomForest(INS ~ ., data = ins_t, mtry = 6, ntree = 1000)
-rf_more
-```
 ```{r}
 var_imp <- varImpPlot(rfmodel)
 var_imp
+```
+#Random variable was 4th highest in importance leading me to believe the model is overfitting
+
+
+
+
+```{r}
+#Code tries different mtry(s) for nodesize=5(previous default was nodesize =1)
+
+# Define mtry values
+mtry_values <- c(4, 6, 8, 12, 16)
+
+# Train models and store results in a list
+set.seed(123)
+models <- lapply(mtry_values, function(m) {
+  randomForest(INS ~ ., data = ins_t, nodesize =5, mtry = m, ntree = 1000)
+})
+
+# Extract OOB error for each model
+oob_errors <- sapply(models, function(mod) mod$err.rate[1000, "OOB"])
+
+# Combine results in a single data frame
+results <- data.frame(mtry = mtry_values, OOB_Error = oob_errors)
+print(results)
+```
+#OOB error was not much different for any of these 4 mtry values even when increaseing the nodesize
+
+```{r}
+library(pROC)
+
+#Convert INS to a factor with valid variable names
+ins_t$INS <- factor(ins_t$INS, levels = c(0, 1), labels = c("No", "Yes"))
+
+set.seed(123)
+#Set up cross-validation
+ctrl <- trainControl(method = "cv", number = 5,
+                     classProbs = TRUE, 
+                     summaryFunction = twoClassSummary,
+                     savePredictions = "final"
+)
+
+rfmodelx <- train(
+  INS ~ ., data = ins_t,
+  method = "rf",
+  metric = "ROC",
+  trControl = ctrl,
+  tuneGrid = data.frame(mtry = c(4, 6, 8, 12, 16, 24, 32, 38)),
+  ntree = 500
+)
+
+rfmodelx
+```
+```{r}
+varImp(rfmodelx)
+```
+
+```{r}
+library(randomForest)
+
+# Ensure target is binary factor with numeric levels
+ins_t$INS <- ins_t_raw$INS
+# Convert INS to binary factor with proper labels
+ins_t$INS <- factor(as.numeric(as.character(ins_t$INS)), 
+                    levels = c(0, 1), 
+                    labels = c("No", "Yes"))
+
+
+
+set.seed(123)
+rf_final <- randomForest(
+  INS ~ ., 
+  data = ins_t,
+  mtry = 16,         # optimal value from caret
+  ntree = 500, 
+  importance = TRUE  # required to compute permutation importance
+)
+
+# Permutation-based variable importance plot
+varImpPlot(
+  rf_final,
+  type = 1, 
+  main = "Permutation Importance (Mean Decrease Accuracy)",
+  n.var = 15
+)
 
 ```
+#When calculating the variable importance based on Mean Decrease Gini the random variable still ranked highly, however when the metric was changed to calculate mean decrease in accuracy the rankings changed an random did not make it in to the top 15.
+
+
+```{r}
+
+roc_cv <- roc(
+  response = rfmodelx$pred$obs,
+  predictor = rfmodelx$pred$Yes,
+  levels = c("No", "Yes"),
+  direction = "<"
+)
+
+auc_value <- auc(roc_cv)
+print(paste("Cross-validated AUC:", round(auc_value, 3)))
+
+plot(
+  roc_cv,
+  col = "#1c61b6",
+  lwd = 3,
+  main = paste("5-Fold Cross-Validated ROC Curve (AUC =", round(auc_value, 3), ")")
+)
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+
+```
+
+
+
+
 
 
 
