@@ -98,17 +98,19 @@ ins_t = ins_t %>%
     )
   )
 ```
-j
+
 
 # Analysis
 
 ## Random Forest
 ```{r}
 #Add random variable for feature selection sanity check
-ins_t$random <- rnorm(nrow(ins_t))
+ins_t_rf = data.frame(ins_t)
+ins_t_rf$random <- rnorm(nrow(ins_t_rf))
+ins_t_rf$INS = factor(ins_t_rf$INS, levels = c(0, 1), labels = c("No", "Yes"))
 
 #Creating Random Forest Model
-rfmodel<-randomForest(INS ~ ., data = ins_t)
+rfmodel<-randomForest(INS ~ ., data = ins_t_rf)
 rfmodel
 plot(rfmodel, main = "Random Forest: Error vs Trees")
 ```
@@ -118,10 +120,7 @@ plot(rfmodel, main = "Random Forest: Error vs Trees")
 var_imp <- varImpPlot(rfmodel)
 var_imp
 ```
-#Random variable was 4th highest in importance leading me to believe the model is overfitting
-
-
-
+Random variable was 4th highest in importance leading me to believe the model is overfitting
 
 ```{r}
 #Code tries different mtry(s) for nodesize=5(previous default was nodesize =1)
@@ -132,7 +131,7 @@ mtry_values <- c(4, 6, 8, 12, 16)
 # Train models and store results in a list
 set.seed(123)
 models <- lapply(mtry_values, function(m) {
-  randomForest(INS ~ ., data = ins_t, nodesize =5, mtry = m, ntree = 1000)
+  randomForest(INS ~ ., data = ins_t_rf, nodesize =5, mtry = m, ntree = 1000)
 })
 
 # Extract OOB error for each model
@@ -142,13 +141,10 @@ oob_errors <- sapply(models, function(mod) mod$err.rate[1000, "OOB"])
 results <- data.frame(mtry = mtry_values, OOB_Error = oob_errors)
 print(results)
 ```
-#OOB error was not much different for any of these 4 mtry values even when increaseing the nodesize
+OOB error was not much different for any of these 4 mtry values even when increaseing the nodesize
 
 ```{r}
 library(pROC)
-
-#Convert INS to a factor with valid variable names
-ins_t$INS <- factor(ins_t$INS, levels = c(0, 1), labels = c("No", "Yes"))
 
 set.seed(123)
 #Set up cross-validation
@@ -159,7 +155,7 @@ ctrl <- trainControl(method = "cv", number = 5,
 )
 
 rfmodelx <- train(
-  INS ~ ., data = ins_t,
+  INS ~ ., data = ins_t_rf,
   method = "rf",
   metric = "ROC",
   trControl = ctrl,
@@ -176,19 +172,10 @@ varImp(rfmodelx)
 ```{r}
 library(randomForest)
 
-# Ensure target is binary factor with numeric levels
-ins_t$INS <- ins_t_raw$INS
-# Convert INS to binary factor with proper labels
-ins_t$INS <- factor(as.numeric(as.character(ins_t$INS)), 
-                    levels = c(0, 1), 
-                    labels = c("No", "Yes"))
-
-
-
 set.seed(123)
 rf_final <- randomForest(
   INS ~ ., 
-  data = ins_t,
+  data = ins_t_rf,
   mtry = 16,         # optimal value from caret
   ntree = 500, 
   importance = TRUE  # required to compute permutation importance
@@ -203,11 +190,10 @@ varImpPlot(
 )
 
 ```
-#When calculating the variable importance based on Mean Decrease Gini the random variable still ranked highly, however when the metric was changed to calculate mean decrease in accuracy the rankings changed an random did not make it in to the top 15.
+When calculating the variable importance based on Mean Decrease Gini the random variable still ranked highly, however when the metric was changed to calculate mean decrease in accuracy the rankings changed an random did not make it in to the top 15.
 
 
 ```{r}
-
 roc_cv <- roc(
   response = rfmodelx$pred$obs,
   predictor = rfmodelx$pred$Yes,
@@ -225,15 +211,7 @@ plot(
   main = paste("5-Fold Cross-Validated ROC Curve (AUC =", round(auc_value, 3), ")")
 )
 abline(a = 0, b = 1, lty = 2, col = "gray")
-
-
 ```
-
-
-
-
-
-
 
 ## XGBoost
 
@@ -247,7 +225,9 @@ Resources:
 > Use the area under the ROC curve (AUC) as your evaluation metric instead of the default in XGBoost.
 
 ```{r}
-ins_t_x = model.matrix(INS ~ ., data = ins_t)[, -1]
+ins_t_xgb = data.frame(ins_t)
+ins_t_xgb$random = rnorm(nrow(ins_t_xgb))
+ins_t_x = model.matrix(INS ~ ., data = ins_t_xgb)[, -1]
 ins_t_y = ins_t$INS %>% as.numeric()
 
 set.seed(123)
@@ -307,7 +287,7 @@ xgb_options = function(x, y,
 }
 
 # Function to do a grid search using a variety of hyperparameters
-xgb_grid = function(x, y, etas, max_depths, subsamples) {
+xgb_grid = function(x, y, etas, max_depths, subsamples, seed) {
   res = tibble(
     eta = numeric(),
     max_depth = numeric(),
@@ -323,7 +303,7 @@ xgb_grid = function(x, y, etas, max_depths, subsamples) {
   for (eta in etas) {
     for (max_depth in max_depths) {
       for (subsample in subsamples) {
-        xgb = xgb_options(x, y, eta, max_depth, subsample, verbose = 0)
+        xgb = xgb_options(x, y, eta, max_depth, subsample, seed = seed, verbose = 0)
         test_auc = xgb$evaluation_log[xgb$best_iteration] %>% 
           pull(test_auc_mean)
         res = res %>%
@@ -402,10 +382,14 @@ xgb_ins_final_model = xgb.train(
   verbose = 1
 )
 
-xgb.ggplot.importance(
-  xgb.importance(feature_names = colnames(ins_t_x), 
-                 model = xgb_ins_final_model)
+xgb_ins_importance = xgb.importance(
+  feature_names = colnames(ins_t_x), 
+  model = xgb_ins_final_model
 )
+
+xgb.ggplot.importance(xgb_ins_importance)
+
+xgb_ins_importance
 ```
 
 
